@@ -1,0 +1,96 @@
+inductive Expr where
+  | const : Float → Expr
+  | var   : String → Expr
+  | add   : Expr → Expr → Expr
+  | sub   : Expr → Expr → Expr
+  | mul   : Expr → Expr → Expr
+  | pow   : Expr → Expr → Expr
+  | sin   : Expr → Expr
+  | cos   : Expr → Expr
+deriving Repr
+
+open Expr
+
+def exprToString : Expr → String
+| const c   => toString c
+| var x     => x
+| add u v   => "(" ++ exprToString u ++ " + " ++ exprToString v ++ ")"
+| sub u v   => "(" ++ exprToString u ++ " - " ++ exprToString v ++ ")"
+| mul u v   => "(" ++ exprToString u ++ " * " ++ exprToString v ++ ")"
+| pow u v   => "(" ++ exprToString u ++ " ^ " ++ exprToString v ++ ")"
+| sin u     => "sin(" ++ exprToString u ++ ")"
+| cos u     => "cos(" ++ exprToString u ++ ")"
+
+def diff : Expr → String → Expr
+| const _, _       => const 0.0
+| var x,   s       => if x = s then const 1.0 else const 0.0
+| add u v, s       => add (diff u s) (diff v s)
+| sub u v, s       => sub (diff u s) (diff v s)
+| mul u v, s       => add (mul (diff u s) v) (mul u (diff v s))
+| pow u (const n), s =>
+    mul (mul (const n) (pow u (const (n - 1.0)))) (diff u s)
+| sin u, s         => mul (cos u) (diff u s)
+| cos u, s         => mul (mul (const (-1.0)) (sin u)) (diff u s)
+| _ , _            => const 0.0
+
+def integrate (e : Expr) (v : String) : Option Expr :=
+  match e with
+  | const c         => Some (mul (const c) (var v))
+  | var x           =>
+    if x = v then Some (mul (const 0.5) (pow (var v) (const 2.0)))
+    else Some (mul (var x) (var v))
+  | add u w         =>
+    match integrate u v, integrate w v with
+    | Some i1, Some i2 => Some (add i1 i2)
+    | _, _             => none
+  | sub u w         =>
+    match integrate u v, integrate w v with
+    | Some i1, Some i2 => Some (sub i1 i2)
+    | _, _             => none
+  | mul (const c) f =>
+    match integrate f v with
+    | Some res => Some (mul (const c) res)
+    | none     => none
+  | mul f (const c) =>
+    match integrate f v with
+    | Some res => Some (mul (const c) res)
+    | none     => none
+  | pow (var x) (const n) =>
+    if x = v then
+      if n = -1.0 then none
+      else Some (mul (const (1.0 / (n + 1.0))) (pow (var v) (const (n + 1.0))))
+    else Some (mul (pow (var x) (const n)) (var v))
+  | _               => none
+
+def doubleIntegrate (e : Expr) (v1 v2 : String) : Option Expr :=
+  match integrate e v1 with
+  | Some intermediate => integrate intermediate v2
+  | none              => none
+
+def calcPartialDerivative : IO Unit := do
+  let f := add (mul (pow (var "x") (const 2.0)) (var "y")) (sin (var "x"))
+  let dfdx := diff f "x"
+  IO.println "Function f(x,y) = (x^2 * y) + sin(x)"
+  IO.println ("Partial derivative with respect to x: " ++ exprToString dfdx)
+
+def calcIntegral : IO Unit := do
+  let f := mul (pow (var "x") (const 2.0)) (var "y")  -- f(x,y) = x^2 * y
+  match integrate f "x" with
+  | Some integral =>
+      IO.println ("Indefinite integral of f(x,y) with respect to x: " ++ exprToString integral)
+  | none => IO.println "Integration failed."
+
+def calcDoubleIntegral : IO Unit := do
+  let f := mul (var "x") (var "y")  -- f(x,y) = x * y
+  match doubleIntegrate f "x" "y" with
+  | Some result =>
+      IO.println ("Double integral of f(x,y) (first with respect to x, then y): " ++ exprToString result)
+  | none => IO.println "Double integration failed."
+
+def main : IO Unit := do
+  let args ← IO.getArgs
+  match args with
+  | [ "pd" ]  => calcPartialDerivative
+  | [ "int" ] => calcIntegral
+  | [ "dint" ] => calcDoubleIntegral
+  | _         => IO.println "Usage: calc_backend <pd|int|dint>"
